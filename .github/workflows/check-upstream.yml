@@ -38,10 +38,16 @@ jobs:
           COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
         run: |
           echo "New tag found: ${{ steps.upstream.outputs.tag }} (was: ${{ steps.last.outputs.tag }})"
-          curl -X POST "$COPR_WEBHOOK_URL" \
+          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+            -X POST "$COPR_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
-            -d '{"ref":"refs/tags/${{ steps.upstream.outputs.tag }}","repository":{"full_name":"${{ github.repository }}"}}'
-          echo "COPR webhook triggered"
+            -d '{}')
+          echo "COPR webhook response: HTTP $HTTP_CODE"
+          cat /tmp/response.txt
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::COPR webhook failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
 
       - name: Update last built tag
         if: steps.upstream.outputs.tag != steps.last.outputs.tag
