@@ -1,0 +1,51 @@
+name: Check upstream release
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # daily at 06:00 UTC
+  workflow_dispatch:       # allow manual trigger
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get latest upstream tag
+        id: upstream
+        run: |
+          LATEST=$(git ls-remote --tags --sort=-v:refname \
+            https://github.com/zotero/zotero.git '[0-9]*' \
+            | grep -v '\^{}' | head -1 | sed 's|.*/||')
+          echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream tag: $LATEST"
+
+      - name: Get last built tag
+        id: last
+        run: |
+          if [ -f .last-built-tag ]; then
+            echo "tag=$(cat .last-built-tag)" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger COPR build if new tag
+        if: steps.upstream.outputs.tag != steps.last.outputs.tag
+        env:
+          COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
+        run: |
+          echo "New tag found: ${{ steps.upstream.outputs.tag }} (was: ${{ steps.last.outputs.tag }})"
+          curl -X POST "$COPR_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d '{"ref":"refs/tags/${{ steps.upstream.outputs.tag }}","repository":{"full_name":"${{ github.repository }}"}}'
+          echo "COPR webhook triggered"
+
+      - name: Update last built tag
+        if: steps.upstream.outputs.tag != steps.last.outputs.tag
+        run: |
+          echo "${{ steps.upstream.outputs.tag }}" > .last-built-tag
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .last-built-tag
+          git commit -m "Build triggered for ${{ steps.upstream.outputs.tag }}"
+          git push

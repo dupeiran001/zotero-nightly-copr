@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Zotero Nightly
+Comment=Reference manager (nightly build)
+Exec=zotero-nightly %u
+Icon=zotero-nightly
+Terminal=false
+Categories=Office;Education;Science;
+StartupNotify=true
+MimeType=x-scheme-handler/zotero;
