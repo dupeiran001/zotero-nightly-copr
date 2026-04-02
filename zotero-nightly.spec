@@ -26,6 +26,7 @@ BuildRequires:  zip
 BuildRequires:  unzip
 BuildRequires:  findutils
 BuildRequires:  desktop-file-utils
+BuildRequires:  openssl
 
 Requires:       gtk3
 Requires:       dbus-libs
