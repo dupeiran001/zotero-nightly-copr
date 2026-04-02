@@ -5,7 +5,7 @@ COPR packaging for [Zotero](https://www.zotero.org/) on Fedora Linux (x86_64 and
 ## Install
 
 ```bash
-sudo dnf copr enable dupeiran/nightly
+sudo dnf copr enable dupeiran/zotero-nightly
 sudo dnf install zotero-nightly
 ```
 
