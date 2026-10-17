@@ -90,3 +90,9 @@ and added `-f` (force full rebuild). `build_srpm.sh` now checks the flags
 against the cloned upstream before doing any work, so this fails in the SRPM
 phase with the current usage instead of after 8 chroot builds. Fix `%build` in
 `zotero-nightly.spec` to match, and `verify-rpm-build.sh` before pushing.
+
+This bit us once: `-q` disappeared in Zotero 10.0.0, so every release from 10.0.2
+to 10.0.6 (Sep–Oct 2026) failed in all chroots while the repo kept serving 9.0.6.
+The repo only catches up with a successful build, so check
+`tools/copr_build_status.py` after a fix rather than assuming the next nightly
+will pick it up — the nightly only fires on a *new* upstream tag.
