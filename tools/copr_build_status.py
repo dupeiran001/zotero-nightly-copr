@@ -118,6 +118,8 @@ def main():
     p.add_argument("--interval", type=int, default=60)
     p.add_argument("--id-only", action="store_true",
                    help="print the newest build id (0 if none) and exit")
+    p.add_argument("--summary", action="store_true",
+                   help="print '<id>\\t<state>\\t<version-release>\\t<chroot count>' and exit")
     p.add_argument("--allow-unreachable", action="store_true",
                    help="a COPR API outage is a warning, not a failure")
     args = p.parse_args()
@@ -129,6 +131,21 @@ def main():
             print(f"::warning::cannot reach COPR API: {exc}", file=sys.stderr)
             return 3
         print(build["id"] if build else 0)
+        return 0
+
+    if args.summary:
+        try:
+            build = newest_build(args.owner, args.project, args.after_id)
+        except NetworkError as exc:
+            print(f"::warning::cannot reach COPR API: {exc}", file=sys.stderr)
+            return 3
+        if not build:
+            print("0\tnone\tunknown\t0")
+            return 0
+        sp = build.get("source_package") or {}
+        # for an SRPM-driven build 'version' already holds VERSION-RELEASE
+        print(f"{build['id']}\t{build.get('state', 'unknown')}\t"
+              f"{sp.get('version') or 'unknown'}\t{len(build.get('chroots') or [])}")
         return 0
 
     deadline = time.monotonic() + args.timeout

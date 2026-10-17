@@ -2,109 +2,183 @@ name: Check upstream release
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # daily at 06:00 UTC
-  workflow_dispatch:       # allow manual trigger
+    # Daily; upstream tags a release roughly once a week.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
     inputs:
       force_build:
-        description: 'Trigger a COPR build even if upstream has no new tag'
+        description: 'Trigger a COPR build even if the upstream tag has not changed'
+        type: boolean
+        default: false
+      check_only:
+        description: 'Only install-test the newest published build (no trigger, no tag update)'
         type: boolean
         default: false
 
 permissions:
   contents: write
 
-env:
-  COPR_OWNER: dupeiran
-  COPR_PROJECT: zotero-nightly
-
 jobs:
   check:
     runs-on: ubuntu-latest
-    # a full COPR build (srpm phase + 8 chroots) can take the better part of an hour
-    timeout-minutes: 120
+    env:
+      # Fedora releases that get an install test after a build; COPR builds all
+      # enabled chroots, this only spot-checks x86_64 from the GitHub runner.
+      FEDORA_CHECKS: '43 44'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Get latest upstream tag
+      - name: Ask upstream for the newest release tag
         id: upstream
         run: |
-          LATEST=$(git ls-remote --tags --sort=-v:refname \
-            https://github.com/zotero/zotero.git '[0-9]*' \
-            | grep -v '\^{}' | head -1 | sed 's|.*/||')
-          echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
-          echo "Latest upstream tag: $LATEST"
+          tag=$(git ls-remote --tags --sort=-v:refname https://github.com/zotero/zotero.git '[0-9]*' \
+                | grep -v '\^{}' | head -1 | awk -F/ '{print $3}')
+          if [ -z "$tag" ]; then
+            echo "::error::could not read any release tag from the upstream repository" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "newest upstream tag: $tag"
 
-      - name: Get last built tag
+      - name: Read the tag this repo last built
         id: last
         run: |
-          if [ -f .last-built-tag ]; then
-            echo "tag=$(cat .last-built-tag)" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=" >> "$GITHUB_OUTPUT"
-          fi
+          last=$(tr -d '[:space:]' < .last-built-tag)
+          echo "last=$last" >> "$GITHUB_OUTPUT"
+          echo "last tag built: ${last:-none}"
 
       - name: Decide whether to build
         id: decide
         run: |
-          if [ "${{ inputs.force_build }}" = "true" ] || \
-             [ "${{ steps.upstream.outputs.tag }}" != "${{ steps.last.outputs.tag }}" ]; then
+          if [ "${{ inputs.check_only }}" = "true" ]; then
+            echo "check_only set, nothing will be triggered"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.force_build }}" = "true" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "forced rebuild requested"
+          elif [ "${{ steps.upstream.outputs.tag }}" != "${{ steps.last.outputs.last }}" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "upstream has ${{ steps.upstream.outputs.tag }}, last built ${{ steps.last.outputs.last }}"
           else
             echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "no new upstream release; the published build is tested as it is"
           fi
 
       - name: Record the newest COPR build id
-        if: steps.decide.outputs.build == 'true'
         id: baseline
-        run: |
-          BASELINE=$(python3 tools/copr_build_status.py \
-            --owner "$COPR_OWNER" --project "$COPR_PROJECT" --id-only)
-          echo "id=$BASELINE" >> "$GITHUB_OUTPUT"
-          echo "Newest build before triggering: $BASELINE"
+        if: steps.decide.outputs.build == 'true'
+        run: echo "id=$(python3 tools/copr_build_status.py --id-only)" | tee "$GITHUB_OUTPUT"
 
       - name: Trigger COPR build
         if: steps.decide.outputs.build == 'true'
+        run: |
+          if [ -z "$COPR_WEBHOOK_URL" ]; then
+            echo "::error::the COPR_WEBHOOK_URL secret is not set; see README.md (Integrations tab of the COPR project)" >&2
+            exit 1
+          fi
+          # A POST asks COPR to rebuild the package from this repository.
+          code=$(curl -sS -o /tmp/copr-response -w '%{http_code}' -X POST \
+                     -H 'Content-Type: application/json' -d '{}' "$COPR_WEBHOOK_URL")
+          cat /tmp/copr-response
+          echo
+          if [ "$code" -ge 400 ]; then
+            echo "::error::COPR webhook returned HTTP $code" >&2
+            exit 1
+          fi
         env:
           COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
+
+      - name: Wait for the COPR build to finish
+        if: steps.decide.outputs.build == 'true'
         run: |
-          echo "New tag found: ${{ steps.upstream.outputs.tag }} (was: ${{ steps.last.outputs.tag }})"
-          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
-            -X POST "$COPR_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d '{}')
-          echo "COPR webhook response: HTTP $HTTP_CODE"
-          cat /tmp/response.txt
-          if [ "$HTTP_CODE" -ge 400 ]; then
-            echo "::error::COPR webhook failed with HTTP $HTTP_CODE"
+          if ! python3 tools/copr_build_status.py --after-id "${{ steps.baseline.outputs.id }}" \
+                 --timeout 18000 --interval 120; then
+            echo "::error::the COPR build did not succeed; the log excerpts above say why" >&2
             exit 1
           fi
 
-      - name: Update last built tag
-        if: steps.upstream.outputs.tag != steps.last.outputs.tag
+      - name: Check which build is published
+        id: built
         run: |
-          echo "${{ steps.upstream.outputs.tag }}" > .last-built-tag
+          # '<id>\t<state>\t<version-release>\t<chroot count>', one line
+          line=$(python3 tools/copr_build_status.py --summary --after-id "${{ steps.baseline.outputs.id || 0 }}")
+          IFS=$'\t' read -r id state nvr chroots <<< "$line" || true
+          echo "build id : $id"
+          echo "state    : $state"
+          echo "version  : $nvr"
+          echo "chroots  : $chroots"
+          {
+            echo "id=$id"
+            echo "state=$state"
+            echo "nvr=$nvr"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$state" != "succeeded" ]; then
+            # Print the failing builder-log excerpts before failing the job.
+            python3 tools/copr_build_status.py --after-id 0 --allow-unreachable || true
+            echo "::error::the newest COPR build ($id) is '$state', not 'succeeded'" >&2
+            exit 1
+          fi
+
+      - name: Install the published RPMs in a clean container
+        env:
+          EXPECT: ${{ steps.built.outputs.nvr }}
+          CONTAINER_TOOL: docker
+        run: |
+          for rel in $FEDORA_CHECKS; do
+            echo "::group::Fedora $rel"
+            ./verify-install.sh "$rel"
+            echo "::endgroup::"
+          done
+
+      - name: Update last built tag
+        if: steps.decide.outputs.build == 'true' && steps.upstream.outputs.tag != steps.last.outputs.last
+        run: |
+          tag="${{ steps.upstream.outputs.tag }}"
+          echo "$tag" > .last-built-tag
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .last-built-tag
-          git commit -m "Build triggered for ${{ steps.upstream.outputs.tag }}"
+          git commit -m "Build triggered for $tag [skip ci]"
           git push
 
-      # The tag is recorded before the outcome is known on purpose, so a broken
-      # build fails this job loudly instead of being retried (and quietly lost)
-      # every night. Re-run the workflow once the spec is fixed.
-      - name: Wait for the COPR build to succeed
-        if: steps.decide.outputs.build == 'true'
+      - name: Summarize
+        if: always()
         run: |
-          python3 tools/copr_build_status.py \
-            --owner "$COPR_OWNER" --project "$COPR_PROJECT" \
-            --after-id "${{ steps.baseline.outputs.id }}" \
-            --timeout 5400 --interval 60
+          {
+            echo "| step | outcome |"
+            echo "| --- | --- |"
+            echo "| upstream tag | ${{ steps.upstream.outputs.tag }} |"
+            echo "| last tag built | ${{ steps.last.outputs.last }} |"
+            echo "| COPR build | ${{ steps.built.outputs.id }} (${{ steps.built.outputs.state }}) |"
+            echo "| published version | ${{ steps.built.outputs.nvr }} |"
+            echo "| install tested | ${FEDORA_CHECKS} x86_64 |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      # No new release today: still assert the newest build in the repo is green,
-      # so a spec/upstream regression cannot sit unnoticed for months.
-      - name: Check the newest published build is healthy
-        if: steps.decide.outputs.build != 'true'
+      - name: Send a failure mail
+        # Only when something above failed and a mail account is configured.
+        if: failure() && env.SMTP_HOST != ''
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
         run: |
-          python3 tools/copr_build_status.py \
-            --owner "$COPR_OWNER" --project "$COPR_PROJECT" --allow-unreachable
-
+          subject="zotero-nightly CI failed (${{ steps.built.outputs.id || 'no build' }})"
+          if [ -n "${{ steps.built.outputs.nvr }}" ]; then
+            subject="$subject ${{ steps.built.outputs.nvr }}"
+          fi
+          {
+            echo "The zotero-nightly COPR pipeline failed."
+            echo
+            echo "upstream tag    : ${{ steps.upstream.outputs.tag }}"
+            echo "last tag built  : ${{ steps.last.outputs.last }}"
+            echo "COPR build      : ${{ steps.built.outputs.id }} (${{ steps.built.outputs.state }})"
+            echo "published       : ${{ steps.built.outputs.nvr }}"
+            echo "tested on       : ${FEDORA_CHECKS} x86_64"
+            echo "build page      : https://copr.fedorainfracloud.org/coprs/build/${{ steps.built.outputs.id }}"
+            echo "run             : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}"
+            echo
+            echo "The last built tag was not updated, so the next daily run retries."
+          } | python3 tools/notify.py --subject "$subject"
