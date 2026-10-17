@@ -8,9 +8,15 @@ on:
 permissions:
   contents: write
 
+env:
+  COPR_OWNER: dupeiran
+  COPR_PROJECT: zotero-nightly
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    # a full COPR build (srpm phase + 8 chroots) can take the better part of an hour
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +37,15 @@ jobs:
           else
             echo "tag=" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Record the newest COPR build id
+        if: steps.upstream.outputs.tag != steps.last.outputs.tag
+        id: baseline
+        run: |
+          BASELINE=$(python3 tools/copr_build_status.py \
+            --owner "$COPR_OWNER" --project "$COPR_PROJECT" --id-only)
+          echo "id=$BASELINE" >> "$GITHUB_OUTPUT"
+          echo "Newest build before triggering: $BASELINE"
 
       - name: Trigger COPR build if new tag
         if: steps.upstream.outputs.tag != steps.last.outputs.tag
@@ -58,3 +73,23 @@ jobs:
           git add .last-built-tag
           git commit -m "Build triggered for ${{ steps.upstream.outputs.tag }}"
           git push
+
+      # The tag is recorded before the outcome is known on purpose, so a broken
+      # build fails this job loudly instead of being retried (and quietly lost)
+      # every night. Re-run the workflow once the spec is fixed.
+      - name: Wait for the COPR build to succeed
+        if: steps.upstream.outputs.tag != steps.last.outputs.tag
+        run: |
+          python3 tools/copr_build_status.py \
+            --owner "$COPR_OWNER" --project "$COPR_PROJECT" \
+            --after-id "${{ steps.baseline.outputs.id }}" \
+            --timeout 5400 --interval 60
+
+      # No new release today: still assert the newest build in the repo is green,
+      # so a spec/upstream regression cannot sit unnoticed for months.
+      - name: Check the newest published build is healthy
+        if: steps.upstream.outputs.tag == steps.last.outputs.tag
+        run: |
+          python3 tools/copr_build_status.py \
+            --owner "$COPR_OWNER" --project "$COPR_PROJECT" --allow-unreachable
+

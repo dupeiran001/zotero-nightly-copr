@@ -16,6 +16,22 @@ git submodule update --init --recursive --depth 1
 # Ensure all submodule working trees are checked out
 git submodule foreach --recursive 'git checkout .'
 
+# Guard: dir_build's CLI is not a stable upstream interface (10.0.0 dropped -q).
+# Fail here, in the SRPM phase, instead of after one wasted failed build per
+# enabled chroot. Keep this list in sync with %build in zotero-nightly.spec.
+DIR_BUILD_OPTS=$(sed -n 's/.*while getopts "\([^"]*\)".*/\1/p' app/scripts/dir_build | head -1)
+for opt in p a f; do
+    case "$DIR_BUILD_OPTS" in
+        *"$opt"*) ;;
+        *)
+            echo "ERROR: app/scripts/dir_build no longer accepts -$opt" >&2
+            echo "       getopts is \"$DIR_BUILD_OPTS\" -- update %build in zotero-nightly.spec" >&2
+            sed -n '/^Usage:/,/^DONE/p' app/scripts/dir_build >&2 || true
+            exit 1
+            ;;
+    esac
+done
+
 # Capture version info
 COMMIT=$(git rev-parse HEAD)
 SHORT_COMMIT=$(git rev-parse --short=9 HEAD)

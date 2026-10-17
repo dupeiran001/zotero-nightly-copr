@@ -62,11 +62,17 @@ echo "ref: refs/heads/main" > .git/HEAD
 cp .commit_hash .git/refs/heads/main
 
 %build
+# dir_build flags are not a stable upstream API. Zotero 10.0.0 removed -q
+# ("quick build") and added -f ("force a full rebuild instead of updating the
+# staged build in place"); the quick-build flag is now hardcoded inside
+# dir_build's own call to app/build.sh, so dropping it here is neutral.
+# -f is what we want in a clean build root: never take the incremental path.
+# build_srpm.sh checks these flags against upstream before the build starts.
 %ifarch x86_64
-app/scripts/dir_build -p l -a x64 -q
+app/scripts/dir_build -p l -a x64 -f
 %endif
 %ifarch aarch64
-app/scripts/dir_build -p l -a arm64 -q
+app/scripts/dir_build -p l -a arm64 -f
 %endif
 
 %install

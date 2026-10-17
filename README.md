@@ -25,3 +25,54 @@ A daily GitHub Actions cron job checks [zotero/zotero](https://github.com/zotero
 - **Install path:** `/usr/lib/zotero-nightly/`
 - **Binary:** `zotero-nightly`
 - **License:** AGPL-3.0-or-later
+
+## Fedora versions
+
+Chroots are `fedora-{43,44,45,rawhide}-{x86_64,aarch64}`. The COPR project has
+**follow Fedora branching** enabled, so when COPR creates a chroot for a new
+Fedora release it is added to this project automatically — nothing in this repo
+pins a Fedora version, and no repo change is needed when Fedora 46, 47, … ship.
+
+To check what a project currently builds for:
+
+```bash
+sudo dnf install copr-cli
+copr-cli list-chroots                        # everything COPR offers right now
+copr-cli detail dupeiran/zotero-nightly      # what this project has enabled
+```
+
+If auto-enabling is ever turned off, add a release with
+`copr-cli modify dupeiran/zotero-nightly --chroot-add fedora-46-x86_64 false`.
+
+## Checking a build before triggering one
+
+Every COPR build fans out to one build per chroot, so a bad spec costs 8 builds.
+`verify-rpm-build.sh` rebuilds the newest published source package in a clean
+Fedora container instead, using the `dir_build` flags currently in the spec:
+
+```bash
+./verify-rpm-build.sh                    # Fedora 43, x86_64
+FEDORA=rawhide ./verify-rpm-build.sh     # pre-check the next Fedora
+```
+
+It only exercises the container's native arch; aarch64 still needs a real
+aarch64 builder (COPR has one).
+
+## Build health
+
+The daily workflow triggers a build and then waits for it, failing if the result
+is not `succeeded`. On failure it prints the builder log URLs and the error
+lines from up to three chroots. Check the newest build by hand with:
+
+```bash
+python3 tools/copr_build_status.py            # read-only, no COPR token needed
+```
+
+## Troubleshooting
+
+**`dir_build: illegal option -- X` in `%build`.** Upstream treats the flags of
+`app/scripts/dir_build` as internal: Zotero 10.0.0 dropped `-q` (quick build)
+and added `-f` (force full rebuild). `build_srpm.sh` now checks the flags
+against the cloned upstream before doing any work, so this fails in the SRPM
+phase with the current usage instead of after 8 chroot builds. Fix `%build` in
+`zotero-nightly.spec` to match, and `verify-rpm-build.sh` before pushing.
