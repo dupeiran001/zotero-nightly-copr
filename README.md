@@ -70,6 +70,18 @@ lines from up to three chroots. Check the newest build by hand with:
 python3 tools/copr_build_status.py            # read-only, no COPR token needed
 ```
 
+To rebuild without waiting for a new upstream tag: **Actions → Check upstream
+release → Run workflow → tick "Trigger a COPR build even if upstream has no new
+tag"**. The workflow keeps the `COPR_WEBHOOK_URL` repo secret, so no token is
+needed locally. That URL is the COPR project's own hook, shown under
+*Settings → Integrations* on the project page
+(`https://copr.fedorainfracloud.org/webhooks/<forge>/<id>/<uuid>/`); it can be
+POSTed directly with `curl -X POST '<url>' -H 'Content-Type: application/json' -d '{}'`,
+or replaced by a GitHub repo webhook pointing at it if you prefer push-triggered
+builds. Your COPR API token (for `copr-cli`, from <https://copr.fedorainfracloud.org/api/>
+into `~/.config/copr`) does the same job as `copr-cli build-package
+dupeiran/zotero-nightly --name zotero-nightly`.
+
 ## Troubleshooting
 
 **`dir_build: illegal option -- X` in `%build`.** Upstream treats the flags of

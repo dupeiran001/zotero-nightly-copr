@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 6 * * *'  # daily at 06:00 UTC
   workflow_dispatch:       # allow manual trigger
+    inputs:
+      force_build:
+        description: 'Trigger a COPR build even if upstream has no new tag'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -38,8 +43,18 @@ jobs:
             echo "tag=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Decide whether to build
+        id: decide
+        run: |
+          if [ "${{ inputs.force_build }}" = "true" ] || \
+             [ "${{ steps.upstream.outputs.tag }}" != "${{ steps.last.outputs.tag }}" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Record the newest COPR build id
-        if: steps.upstream.outputs.tag != steps.last.outputs.tag
+        if: steps.decide.outputs.build == 'true'
         id: baseline
         run: |
           BASELINE=$(python3 tools/copr_build_status.py \
@@ -47,8 +62,8 @@ jobs:
           echo "id=$BASELINE" >> "$GITHUB_OUTPUT"
           echo "Newest build before triggering: $BASELINE"
 
-      - name: Trigger COPR build if new tag
-        if: steps.upstream.outputs.tag != steps.last.outputs.tag
+      - name: Trigger COPR build
+        if: steps.decide.outputs.build == 'true'
         env:
           COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
         run: |
@@ -78,7 +93,7 @@ jobs:
       # build fails this job loudly instead of being retried (and quietly lost)
       # every night. Re-run the workflow once the spec is fixed.
       - name: Wait for the COPR build to succeed
-        if: steps.upstream.outputs.tag != steps.last.outputs.tag
+        if: steps.decide.outputs.build == 'true'
         run: |
           python3 tools/copr_build_status.py \
             --owner "$COPR_OWNER" --project "$COPR_PROJECT" \
@@ -88,7 +103,7 @@ jobs:
       # No new release today: still assert the newest build in the repo is green,
       # so a spec/upstream regression cannot sit unnoticed for months.
       - name: Check the newest published build is healthy
-        if: steps.upstream.outputs.tag == steps.last.outputs.tag
+        if: steps.decide.outputs.build != 'true'
         run: |
           python3 tools/copr_build_status.py \
             --owner "$COPR_OWNER" --project "$COPR_PROJECT" --allow-unreachable
