@@ -38,11 +38,13 @@ To check what a project currently builds for:
 ```bash
 sudo dnf install copr-cli
 copr-cli list-chroots                        # everything COPR offers right now
-copr-cli detail dupeiran/zotero-nightly      # what this project has enabled
+copr-cli get dupeiran/zotero-nightly         # what this project has enabled
 ```
 
-If auto-enabling is ever turned off, add a release with
-`copr-cli modify dupeiran/zotero-nightly --chroot-add fedora-46-x86_64 false`.
+If auto-enabling is ever turned off (`copr-cli modify --follow-fedora-branching
+off`), re-enable it or add a release by hand with
+`copr-cli modify dupeiran/zotero-nightly --chroot fedora-46-x86_64`, then confirm
+with `copr-cli get`. The same settings are under project *Edit* in the web UI.
 
 ## Checking a build before triggering one
 
