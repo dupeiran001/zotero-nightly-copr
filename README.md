@@ -60,6 +60,15 @@ FEDORA=rawhide ./verify-rpm-build.sh     # pre-check the next Fedora
 It only exercises the container's native arch; aarch64 still needs a real
 aarch64 builder (COPR has one).
 
+After a build succeeds, `verify-install.sh` takes the end-user path in a
+container: it writes the real COPR `.repo` file (so the GPG key is used the way
+`dnf copr enable` uses it), installs, runs `rpm -V` and `desktop-file-validate`,
+and starts the app as a non-root user:
+
+```bash
+./verify-install.sh 43
+```
+
 ## Build health
 
 The daily workflow triggers a build and then waits for it, failing if the result
