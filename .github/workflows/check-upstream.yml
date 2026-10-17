@@ -152,33 +152,14 @@ jobs:
             echo "| COPR build | ${{ steps.built.outputs.id }} (${{ steps.built.outputs.state }}) |"
             echo "| published version | ${{ steps.built.outputs.nvr }} |"
             echo "| install tested | ${FEDORA_CHECKS} x86_64 |"
+            echo "| job result | ${{ job.status }} |"
+            echo
+            echo "[run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            if [ -n "${{ steps.built.outputs.id }}" ]; then
+              echo " · [COPR build ${{ steps.built.outputs.id }}](https://copr.fedorainfracloud.org/coprs/build/${{ steps.built.outputs.id }})"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Send a failure mail
-        # Only when something above failed and a mail account is configured.
-        if: failure() && env.SMTP_HOST != ''
-        env:
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
-        run: |
-          subject="zotero-nightly CI failed (${{ steps.built.outputs.id || 'no build' }})"
-          if [ -n "${{ steps.built.outputs.nvr }}" ]; then
-            subject="$subject ${{ steps.built.outputs.nvr }}"
+          if [ "${{ job.status }}" != "success" ]; then
+            # No SMTP needed: GitHub mails the workflow author about failed runs.
+            echo "::notice::failed - the run log above says why; set Settings -> Notifications -> System -> Actions -> 'Only notify for failed workflows' to be mailed"
           fi
-          {
-            echo "The zotero-nightly COPR pipeline failed."
-            echo
-            echo "upstream tag    : ${{ steps.upstream.outputs.tag }}"
-            echo "last tag built  : ${{ steps.last.outputs.last }}"
-            echo "COPR build      : ${{ steps.built.outputs.id }} (${{ steps.built.outputs.state }})"
-            echo "published       : ${{ steps.built.outputs.nvr }}"
-            echo "tested on       : ${FEDORA_CHECKS} x86_64"
-            echo "build page      : https://copr.fedorainfracloud.org/coprs/build/${{ steps.built.outputs.id }}"
-            echo "run             : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}"
-            echo
-            echo "The last built tag was not updated, so the next daily run retries."
-          } | python3 tools/notify.py --subject "$subject"

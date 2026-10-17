@@ -32,7 +32,8 @@ If you want a real nightly, compare the commit at the tip of upstream `main`
 (`git ls-remote https://github.com/zotero/zotero.git HEAD`) instead of the newest
 tag and store it in a second file; every upstream merge would then produce a
 build, at the cost of one 8-chroot build per day and the occasional upstream break
-— which is exactly what the failure mail is for.
+— which is exactly what the failure mail is for (GitHub sends it, see
+[Failure mail from GitHub](#failure-mail-from-github)).
 
 ## Package details
 
@@ -143,16 +144,24 @@ The daily workflow does all of this in one job:
 Because the tag is written last, a failed build leaves the tag alone and the next
 daily run retries the same release instead of skipping it as already built.
 
-| secret | needed for | notes |
-| --- | --- | --- |
-| `COPR_WEBHOOK_URL` | triggering the build | the project's own hook, see below; no token involved |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | failure mail | optional; without them the workflow just skips the mail step |
-| `MAIL_TO`, `MAIL_FROM` | failure mail | `MAIL_TO` is required for a mail to be sent |
+The only repository secret this workflow needs is `COPR_WEBHOOK_URL` (the
+project's own hook, see below; no token involved).
 
-`tools/notify.py` sends the mail with plain `smtplib` (implicit TLS on 465,
-STARTTLS on 587) and refuses to send credentials over a connection without TLS.
-Set `SMTP_PORT=25` plus `SMTP_INSECURE=1` only if your relay really is plaintext
-on the local network.
+### Failure mail from GitHub
+
+GitHub sends it. Turn on *Settings → Notifications → System → Actions* and pick
+"Email", or "Only notify for failed workflows" if that is all you want to hear
+about; you have to be watching the repository for the Actions setting to apply.
+The workflow itself only has to fail, which every step above does, and the run
+summary on the failed run lists the tag, the build id, its state, the published
+version and links to both logs.
+
+One quirk in the GitHub docs worth knowing: notifications for a **scheduled**
+run go to the user who originally created the workflow — that only moves if
+somebody edits the cron syntax, or if a disabled schedule is re-enabled (then it
+follows whoever re-enabled it). The cron line here has been untouched since the
+initial commit, so the daily mail is addressed to you. If scheduled-run mail ever
+stops arriving, that is the first thing to check.
 
 Check the newest build by hand with:
 
